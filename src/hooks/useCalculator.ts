@@ -1,13 +1,6 @@
-import { useState } from 'react';
+import { useState } from 'react'; // Importa el hook useState de React para manejar el estado
 
-// ═══════════════════════════════════════════════════════════════════
-// MEJORA 1 — ENUM DE OPERADORES
-// Un enum es una característica de TypeScript (no existe en JS puro).
-// Crea un tipo que solo puede tener los valores definidos aquí.
-// Ventaja: si escribes Operator.aadd el compilador te avisa al instante.
-// Usar strings sueltos '+' '-' en 10 lugares distintos es frágil;
-// si cambias el símbolo, tendrías que buscarlo manualmente en todo el código.
-// ═══════════════════════════════════════════════════════════════════
+// Enum que define los operadores matemáticos y sus símbolos
 enum Operator {
   add      = '+',
   subtract = '-',
@@ -15,107 +8,61 @@ enum Operator {
   divide   = '/',
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// TYPE GUARD: isOperator
-// Una función que TypeScript usa para ESTRECHAR (narrow) el tipo de
-// una variable dentro de un bloque if.
-// El retorno "char is Operator" le dice al compilador:
-//   "si esta función retorna true, a partir de aquí `char` es Operator"
-// Internamente usa Object.values(Operator) → ['+', '-', '*', '/']
-// y el cast "as Operator" es necesario porque .includes() recibe el
-// tipo base del array (string), no el tipo estrecho (Operator).
-// ═══════════════════════════════════════════════════════════════════
+// Función guardia que comprueba si un carácter es un operador válido
 const isOperator = (char: string): char is Operator =>
   Object.values(Operator).includes(char as Operator);
 
-
+// Hook personalizado que contiene toda la lógica de la calculadora
 export const useCalculator = () => {
 
-  // Estado principal: la cadena completa visible en la pantalla, ej: "12+3.5"
-  // useState<string> infiere el tipo automáticamente desde el valor inicial.
+  // Estado que guarda la expresión actual mostrada en pantalla (inicia en '0')
   const [expression, setExpression] = useState('0');
 
-  // Estado secundario: guarda la expresión AL MOMENTO de presionar "="
-  // para mostrarla más pequeña arriba (como historial de un paso).
+  // Estado que guarda el historial de la operación antes de calcular
   const [history, setHistory] = useState('');
 
-
-  // ═════════════════════════════════════════════════════════════════
-  // MEJORA 3 — EVALUADOR MATEMÁTICO EXPLÍCITO (función privada)
-  //
-  // Esta función NO está en el return, así que es PRIVADA al hook.
-  // Solo la usan calculate() internamente. Esto es encapsulamiento:
-  // el componente de React no tiene acceso a evaluateExpression.
-  //
-  // Algoritmo en dos pasadas (respeta la precedencia de operadores):
-  //   1ª pasada → resuelve * y / de izquierda a derecha
-  //   2ª pasada → resuelve + y - de izquierda a derecha
-  //
-  // Ejemplo: "2+3*4"
-  //   tokens  → ["2", "+", "3", "*", "4"]
-  //   numbers → [2, 3, 4]   operators → ["+", "*"]
-  //   1ª: 3*4=12  → numbers=[2,12]  operators=["+"]
-  //   2ª: 2+12=14 → result = 14  ✓  (new Function daría 14 también,
-  //       pero con un switch vemos exactamente qué operación se hace)
-  // ═════════════════════════════════════════════════════════════════
+  // Función que evalúa una expresión matemática en formato string y devuelve un número
   const evaluateExpression = (expr: string): number => {
 
-    // .match() con flag 'g' devuelve TODOS los matches como array, o null si no hay.
-    // El operador ?? (nullish coalescing) reemplaza null/undefined por [].
-    // Regex: [\d.]+ → uno o más dígitos o puntos (captura "12.5")
-    //        [+\-*/] → exactamente un operador (el \ escapa el - dentro de [])
+    // Tokeniza la expresión: separa números (incluyendo decimales) y operadores usando regex
     const tokens = expr.match(/[\d.]+|[+\-*/]/g) ?? [];
 
+    // Si no hay tokens, lanza error
     if (tokens.length === 0) throw new Error('Expresión vacía');
 
-    // Optimización: si solo hay un token (ej: "7"), lo retornamos directo.
-    // parseFloat convierte el string "7" al número 7.
+    // Si solo hay un token, es un número; lo devuelve como float
     if (tokens.length === 1) return parseFloat(tokens[0]);
 
-    // Declaración de tipo explícita: TypeScript sabe que numbers[] solo
-    // contendrá number, y operators[] solo contendrá string.
+    // Arrays para almacenar números y operadores por separado
     const numbers: number[]  = [];
     const operators: string[] = [];
 
-    // forEach recibe (elemento, índice).
-    // Los números están en posiciones PARES (0, 2, 4...) y
-    // los operadores en posiciones IMPARES (1, 3, 5...).
-    // Esto funciona porque la expresión siempre tiene la forma:
-    //   número OP número OP número ...
+    // Recorre los tokens: posiciones pares son números, impares son operadores
     tokens.forEach((token, index) => {
       if (index % 2 === 0) {
-        numbers.push(parseFloat(token)); // parseFloat("3.14") → 3.14
+        numbers.push(parseFloat(token)); // Convierte a número
       } else {
-        operators.push(token);
+        operators.push(token); // Guarda el operador
       }
     });
 
-    // ── PRIMERA PASADA: Multiplicación y División ──────────────────
-    // Usamos while en lugar de for porque el array se modifica dentro del bucle.
-    // splice(start, deleteCount, ...items):
-    //   numbers.splice(i, 2, result) → borra 2 elementos desde i, inserta result
-    //   operators.splice(i, 1)       → borra 1 elemento desde i
-    // Después del splice, el elemento de índice i ya es el SIGUIENTE,
-    // por eso NO incrementamos i cuando encontramos * o /.
+    // Resuelve primero multiplicaciones y divisiones (mayor precedencia)
     let i = 0;
     while (i < operators.length) {
       if (operators[i] === Operator.multiply || operators[i] === Operator.divide) {
         const result =
           operators[i] === Operator.multiply
-            ? numbers[i] * numbers[i + 1]
-            : numbers[i] / numbers[i + 1]; // división por cero → Infinity (se atrapa en calculate)
-        numbers.splice(i, 2, result);  // [2, 3, 4] → [2, 12] con i=1, result=12
-        operators.splice(i, 1);        // ["+", "*"] → ["+"]
-        // NO hacemos i++ porque el arreglo se compactó
+            ? numbers[i] * numbers[i + 1]   // Multiplicación
+            : numbers[i] / numbers[i + 1];  // División
+        numbers.splice(i, 2, result);       // Reemplaza los dos números por el resultado
+        operators.splice(i, 1);             // Elimina el operador usado
       } else {
-        i++; // solo avanzamos si el operador actual NO era * ni /
+        i++; // Avanza si no es * o /
       }
     }
 
-    // ── SEGUNDA PASADA: Suma y Resta ───────────────────────────────
-    // Al llegar aquí, operators[] solo contiene '+' y '-'.
-    // Acumulamos el resultado de izquierda a derecha.
-    let result = numbers[0]; // primer número como valor base
+    // Ahora resuelve sumas y restas de izquierda a derecha
+    let result = numbers[0]; // Comienza con el primer número
     for (let j = 0; j < operators.length; j++) {
       switch (operators[j]) {
         case Operator.add:
@@ -127,153 +74,111 @@ export const useCalculator = () => {
       }
     }
 
-    return result;
+    return result; // Devuelve el resultado final
   };
 
-
-  // ═════════════════════════════════════════════════════════════════
-  // MEJORA 2 — handleNumber con protección de ceros iniciales
-  //
-  // BUG en la versión original:
-  //   Usuario escribe 2 → + → 0 → 7
-  //   expression queda "2+07" → matemáticamente ambiguo
-  //   (en algunos contextos "07" se lee como octal)
-  //
-  // Solución: detectamos si el segmento actual termina en "0" solitario
-  // y lo reemplazamos en lugar de concatenar.
-  // ═════════════════════════════════════════════════════════════════
+  // Manejador para cuando el usuario presiona un dígito (0-9)
   const handleNumber = (num: string) => {
 
-    // setExpression acepta un valor O una función (prev) => nuevoValor.
-    // Usamos la forma de función para acceder al estado más reciente,
-    // evitando el "stale state" que ocurre si llamamos setExpression(expression + num).
     setExpression((prev) => {
 
-      // Casos base: si la pantalla muestra '0' o 'Error', el nuevo dígito la reemplaza.
+      // Si la pantalla es '0' o 'Error', reemplaza por el nuevo número
       if (prev === '0' || prev === 'Error') return num;
 
-      // Dividimos la expresión completa por cualquier operador.
-      // Regex /[+\-*/]/ hace split por +, -, * o /.
-      // Ej: "12+0" → ["12", "0"]
-      // Ej: "12+"  → ["12", ""]   (el último elemento es cadena vacía)
+      // Divide la expresión por operadores para obtener el último número ingresado
       const parts   = prev.split(/[+\-*/]/);
-      const lastPart = parts[parts.length - 1]; // el número que se está escribiendo AHORA
+      const lastPart = parts[parts.length - 1];
 
-      // Si el segmento actual es exactamente "0" y el nuevo carácter no es ".",
-      // reemplazamos ese "0" por el nuevo dígito.
-      // prev.slice(0, -1) elimina el último carácter ("0") de la expresión completa.
-      // Ej: prev="2+0", num="7" → "2+" + "7" = "2+7"
+      // Evita múltiples ceros a la izquierda: si el último número es exactamente '0' y no es punto decimal
       if (lastPart === '0' && num !== '.') {
-        return prev.slice(0, -1) + num;
+        return prev.slice(0, -1) + num; // Reemplaza el último carácter
       }
 
-      // Caso normal: concatenamos el nuevo dígito
+      // Caso normal: concatena el número al final
       return prev + num;
     });
   };
 
-
-  // ═════════════════════════════════════════════════════════════════
-  // handleOperator — sin cambios en la lógica, usa isOperator
-  //
-  // Acepta string (no Operator) para que App.tsx no necesite cambios.
-  // El Type Guard isOperator se encarga de la validación internamente.
-  // ═════════════════════════════════════════════════════════════════
+  // Manejador para cuando el usuario presiona un operador (+, -, *, /)
   const handleOperator = (op: string) => {
     setExpression((prev) => {
-      // Si la pantalla muestra Error, comenzamos una nueva expresión desde 0
+
+      // Si hay error, reinicia con '0' seguido del operador
       if (prev === 'Error') return '0' + op;
 
-      const lastChar = prev.slice(-1); // último carácter de la expresión
+      const lastChar = prev.slice(-1); // Último carácter de la expresión
 
-      // Si el último carácter YA es un operador, lo sustituimos.
-      // Esto evita expresiones como "2++3" o "5*-" (el segundo op reemplaza al primero).
+      // Si el último carácter ya es un operador, lo reemplaza por el nuevo
       if (isOperator(lastChar)) {
-        return prev.slice(0, -1) + op; // quitamos el último char y ponemos el nuevo op
+        return prev.slice(0, -1) + op;
       }
 
+      // Caso normal: concatena el operador
       return prev + op;
     });
   };
 
-
-  // ═════════════════════════════════════════════════════════════════
-  // handleDecimal — sin cambios, la lógica ya era robusta
-  //
-  // Garantiza que cada segmento numérico tenga como máximo UN punto.
-  // ═════════════════════════════════════════════════════════════════
+  // Manejador para el punto decimal
   const handleDecimal = () => {
     setExpression((prev) => {
+      // Si hay error, reinicia con '0.'
       if (prev === 'Error') return '0.';
 
+      // Obtiene el último número de la expresión
       const parts    = prev.split(/[+\-*/]/);
       const lastPart = parts[parts.length - 1];
 
-      // Si acabamos de escribir un operador, el último segmento es '' → añadimos "0."
+      // Si el último número está vacío (ej: terminó en operador), agrega '0.'
       if (lastPart === '') return prev + '0.';
 
-      // Si el segmento actual YA tiene punto, ignoramos la pulsación
+      // Evita múltiples puntos decimales en el mismo número
       if (lastPart.includes('.')) return prev;
 
+      // Caso normal: agrega el punto
       return prev + '.';
     });
   };
 
-
-  // Limpia completamente la calculadora a su estado inicial
+  // Limpia toda la calculadora (pantalla a '0' y borra historial)
   const clear = () => {
     setExpression('0');
     setHistory('');
   };
 
-
-  // ═════════════════════════════════════════════════════════════════
-  // calculate — usa evaluateExpression en vez de new Function()
-  // ═════════════════════════════════════════════════════════════════
+  // Calcula el resultado cuando se presiona el signo igual (=)
   const calculate = () => {
     try {
-      // Guardamos la expresión actual en el historial ANTES de calcular
+      // Guarda la expresión actual en el historial
       setHistory(expression);
 
       let expToEval = expression;
 
-      // Sanitización: si la expresión termina en operador (ej: "3+"), lo removemos
+      // Si el último carácter es un operador, lo elimina para evitar errores
       if (isOperator(expToEval.slice(-1))) {
         expToEval = expToEval.slice(0, -1);
       }
 
+      // Evalúa la expresión
       const result = evaluateExpression(expToEval);
 
-      // isFinite(x) retorna false si x es Infinity o -Infinity (división por cero)
-      // isNaN(x) retorna true si x no es un número válido
+      // Verifica si el resultado es un número válido (no infinito ni NaN)
       if (!isFinite(result) || isNaN(result)) {
         setExpression('Error');
-        return; // salimos del try sin llegar al setExpression de abajo
+        return;
       }
 
-      // Corrección de punto flotante de JavaScript:
-      // 0.1 + 0.2 en JS = 0.30000000000000004
-      // Multiplicar por 10^7, redondear al entero más cercano y dividir
-      // equivale a truncar a 7 decimales de precisión.
-      // El separador de miles _ es sintaxis ES2021: 10_000_000 = 10000000
+      // Redondea el resultado a máximo 7 decimales
       const formattedResult = Math.round(result * 10_000_000) / 10_000_000;
 
-      setExpression(String(formattedResult)); // convertimos number → string para el estado
+      // Muestra el resultado en pantalla
+      setExpression(String(formattedResult));
     } catch {
-      // Si evaluateExpression lanza cualquier error, mostramos "Error"
-      // La cláusula catch vacía (sin variable) es válida desde ES2019 / TS 2.5
+      // Si ocurre cualquier error, muestra 'Error'
       setExpression('Error');
     }
   };
 
-
-  // ═════════════════════════════════════════════════════════════════
-  // RETURN DEL HOOK
-  // Solo exponemos lo que el componente necesita.
-  // evaluateExpression NO está aquí → permanece privada.
-  // Los nombres coinciden exactamente con lo que App.tsx destructura,
-  // por eso App.tsx no necesita ningún cambio.
-  // ═════════════════════════════════════════════════════════════════
+  // Retorna los estados y funciones para que un componente pueda usarlos
   return {
     expression,
     history,
